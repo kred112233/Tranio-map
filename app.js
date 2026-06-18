@@ -1,5 +1,6 @@
 // ============================================================
-//  Логика карты. Обычно трогать не нужно — данные в projects.js.
+//  Логика карты. Данные берутся из Google-таблицы (см. config.js).
+//  Обычно этот файл трогать не нужно.
 // ============================================================
 
 const POI_CATEGORIES = {
@@ -16,54 +17,148 @@ const POI_QUERY = {
   hospital: '["amenity"~"hospital|clinic"]', restaurant: '["amenity"="restaurant"]'
 };
 
-const SEARCH_RADIUS = 2000;          // метров
-let displayMode = "named";           // "named" (голубой) | "anon" (чёрно-золотой, без названий/ссылок)
-let activeRegion = "all";
-let presenting = false;              // режим презентации: чистая карта + подписи цен
+const SEARCH_RADIUS = 2000;
+let PROJECTS = [];
+let displayMode = "named";
+let activeCountry = "all";
+let presenting = false;
 
 // ---- Карта ----
-const map = L.map("map", { zoomControl: true }).setView(REGIONS.all.center, REGIONS.all.zoom);
+const map = L.map("map", { zoomControl: true }).setView([25, 65], 4);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" }).addTo(map);
-
 const projMarkers = {};
 let poiLayer = L.layerGroup().addTo(map);
 
-// ---- Геометрия ----
+// ============================================================
+//  ЗАГРУЗКА ДАННЫХ ИЗ ТАБЛИЦЫ
+// ============================================================
+async function loadData() {
+  try {
+    const res = await fetch(SHEET_CSV_URL + "&_=" + Date.now());  // обход кэша браузера
+    const text = await res.text();
+    PROJECTS = rowsToProjects(parseCSV(text));
+    if (!PROJECTS.length) throw new Error("Таблица пустая");
+    document.getElementById("loading").style.display = "none";
+    buildTopbar();
+    renderProjects();
+    fitTo(PROJECTS);
+  } catch (e) {
+    document.getElementById("loading").innerHTML =
+      "Не удалось загрузить таблицу.<br>Проверь, что она опубликована как CSV.<br><small>" + e.message + "</small>";
+  }
+}
+
+// Разбор CSV с учётом кавычек, запятых и переносов внутри ячеек
+function parseCSV(text) {
+  const rows = []; let row = [], field = "", inQ = false, i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i += 2; continue; } inQ = false; i++; continue; }
+      field += c; i++;
+    } else {
+      if (c === '"') { inQ = true; i++; }
+      else if (c === ",") { row.push(field); field = ""; i++; }
+      else if (c === "\r") { i++; }
+      else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; }
+      else { field += c; i++; }
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function rowsToProjects(rows) {
+  if (!rows.length) return [];
+  const H = {}; rows[0].forEach((h, i) => H[h.trim()] = i);
+  const get = (r, name) => (H[name] != null ? (r[H[name]] || "").trim() : "");
+  const out = [];
+  rows.slice(1).forEach((r, idx) => {
+    const country = get(r, "Страна");
+    const coords = parseCoords(get(r, "Координаты"));
+    if (!country || !coords) return;               // пустые/битые строки пропускаем
+    const type = get(r, "Тип");
+    const stage = get(r, "Стадия");
+    const srok = get(r, "Срок сдачи");
+    const photos = get(r, "Фото").split("|").map(s => s.trim()).filter(Boolean);
+    const price = get(r, "Цена");
+    out.push({
+      id: "p" + idx, country, coords,
+      name: get(r, "Название") || "Без названия",
+      area: get(r, "Город/Локация"),
+      type, typeCat: deriveType(type),
+      stageLabel: stageLabel(deriveStage(stage), srok), stageCat: deriveStage(stage),
+      price, eur: priceToEur(price),
+      size: get(r, "Площадь и спальни"),
+      desc: get(r, "Описание"),
+      photos, img: photos[0] || null,
+      url: get(r, "Ссылка")
+    });
+  });
+  return out;
+}
+
+function parseCoords(s) {
+  const m = s.split(",").map(x => parseFloat(x.trim()));
+  return (m.length === 2 && !isNaN(m[0]) && !isNaN(m[1])) ? [m[0], m[1]] : null;
+}
+function priceToEur(s) {
+  if (!s) return 0;
+  const num = parseInt(s.replace(/[^\d]/g, ""), 10) || 0;
+  const cur = Object.keys(FX_TO_EUR).find(c => s.includes(c)) || "€";
+  return Math.round(num * FX_TO_EUR[cur]);
+}
+function deriveType(t) {
+  const l = t.toLowerCase();
+  if (l.includes("кондо")) return "Кондо";
+  if (l.includes("вилл")) return "Виллы";
+  if (l.includes("апарт")) return "Апартаменты";
+  return t || "Другое";
+}
+function deriveStage(s) {
+  const l = s.toLowerCase();
+  if (l.includes("строит")) return "Строится";
+  if (l.includes("готов")) return "Готов";
+  if (l.includes("запрос")) return "По запросу";
+  return s || "—";
+}
+function stageLabel(cat, srok) {
+  if (cat === "Строится") return srok ? `Строится · сдача ${srok}` : "Строится";
+  if (cat === "Готов") return srok ? `Готов · ${srok}` : "Готов";
+  return cat;
+}
+
+// ============================================================
+//  ОТОБРАЖЕНИЕ
+// ============================================================
+const fmtDist = m => m < 1000 ? `~${Math.round(m / 10) * 10} м` : `~${(m / 1000).toFixed(1)} км`;
 function distance(a, b) {
   const R = 6371000, rad = Math.PI / 180;
   const dLat = (b[0] - a[0]) * rad, dLon = (b[1] - a[1]) * rad;
   const s = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(s));
 }
-const fmtDist = m => m < 1000 ? `~${Math.round(m / 10) * 10} м` : `~${(m / 1000).toFixed(1)} км`;
 
-// ---- Карточка проекта (зависит от режима) ----
 function cardHTML(p) {
   const img = p.img
     ? `<img src="${p.img}" onerror="this.outerHTML='<div class=&quot;noimg&quot;>Фото не загрузилось</div>'">`
     : `<div class="noimg">Фото будет позже</div>`;
-  // в анонимном режиме — НЕТ названия и ссылки на сайт; заголовок = тип + локация
   const title = displayMode === "anon" ? `${p.type} · ${p.area}` : p.name;
   const areaLine = displayMode === "anon" ? "" : `<div class="area">📍 ${p.area}</div>`;
-  const link = displayMode === "anon" ? "" :
+  const link = (displayMode === "anon" || !p.url) ? "" :
     `<a class="link" href="${p.url}" target="_blank" rel="noopener">Открыть проект на tranio.ru ↗</a>`;
-  return `
-    <div class="card">${img}
-      <div class="body">
-        <h3>${title}</h3>${areaLine}
-        <div class="tags"><span>${p.type}</span><span>${p.stage}</span><span>${p.size}</span></div>
-        <div class="price">${p.price}</div>
-        <div class="desc">${p.desc}</div>
-        ${link}
-        <button class="nearby-btn" onclick="loadNearby('${p.id}', this)">Показать, что рядом</button>
-        <div class="nearby-list" id="nearby-${p.id}"></div>
-      </div>
-    </div>`;
+  return `<div class="card">${img}<div class="body">
+      <h3>${title}</h3>${areaLine}
+      <div class="tags"><span>${p.type}</span><span>${p.stageLabel}</span><span>${p.size}</span></div>
+      <div class="price">${p.price}</div>
+      <div class="desc">${p.desc}</div>${link}
+      <button class="nearby-btn" onclick="loadNearby('${p.id}', this)">Показать, что рядом</button>
+      <div class="nearby-list" id="nearby-${p.id}"></div></div></div>`;
 }
 
-// ---- Рендер маркеров под текущий режим ----
 function renderProjects() {
   Object.values(projMarkers).forEach(m => map.removeLayer(m));
+  for (const k in projMarkers) delete projMarkers[k];
   PROJECTS.forEach(p => {
     const cls = displayMode === "anon" ? "gold" : "blue";
     const glyph = displayMode === "anon" ? "★" : "🏠";
@@ -83,7 +178,7 @@ function applyFilters() {
   const stages = checkedValues("stage");
   const maxEur = +document.getElementById("budget").value;
   PROJECTS.forEach(p => {
-    const ok = (activeRegion === "all" || p.region === activeRegion)
+    const ok = (activeCountry === "all" || p.country === activeCountry)
       && types.includes(p.typeCat) && stages.includes(p.stageCat) && p.eur <= maxEur;
     const m = projMarkers[p.id];
     if (ok && !map.hasLayer(m)) m.addTo(map);
@@ -102,11 +197,9 @@ function updateLabels() {
     if (presenting && map.hasLayer(m)) {
       n++;
       const thumb = p.img ? `style="background-image:url('${p.img}')"` : "";
-      m.bindTooltip(
-        `<div class="ml"><div class="ml-thumb" ${thumb}></div>` +
+      m.bindTooltip(`<div class="ml"><div class="ml-thumb" ${thumb}></div>` +
         `<div class="ml-text"><b>Проект ${n}</b><span>${p.price}</span></div></div>`,
-        { permanent: true, direction: "top", offset: [0, -34],
-          className: "map-label" + (displayMode === "anon" ? " gold" : "") });
+        { permanent: true, direction: "top", offset: [0, -34], className: "map-label" + (displayMode === "anon" ? " gold" : "") });
       m.openTooltip();
       const title = displayMode === "anon" ? `${p.type} · ${p.area}` : `${p.name} · ${p.area}`;
       rows += `<div class="lg-row"><b>${n}</b><span>${title}</span><span class="lg-price">${p.price}</span></div>`;
@@ -117,29 +210,18 @@ function updateLabels() {
   legend.innerHTML = rows ? `<div class="lg-title">Проекты на карте</div>${rows}` : "";
 }
 
-// ---- Включение/выключение презентации ----
-function togglePresent() {
-  presenting = !presenting;
-  document.body.classList.toggle("presenting", presenting);
-  document.getElementById("present-btn").textContent = presenting ? "✕ Выйти" : "▣ Презентация";
-  map.closePopup();
-  updateLabels();
-}
-
 // ---- Инфраструктура рядом (Overpass / OpenStreetMap) ----
 async function loadNearby(projectId, btn) {
   const p = PROJECTS.find(x => x.id === projectId);
   const cats = Object.keys(POI_CATEGORIES).filter(k => document.getElementById("poi-" + k).checked);
   const out = document.getElementById("nearby-" + projectId);
   if (!cats.length) { out.innerHTML = '<div class="nearby-empty">Отметь категории слева.</div>'; return; }
-
   btn.disabled = true; btn.textContent = "Ищу рядом…";
   poiLayer.clearLayers();
   const [lat, lon] = p.coords;
   const parts = cats.map(k =>
     `node${POI_QUERY[k]}(around:${SEARCH_RADIUS},${lat},${lon});way${POI_QUERY[k]}(around:${SEARCH_RADIUS},${lat},${lon});`).join("");
   const q = `[out:json][timeout:25];(${parts});out center tags;`;
-
   try {
     const res = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: "data=" + encodeURIComponent(q) });
     const data = await res.json();
@@ -171,7 +253,7 @@ async function loadNearby(projectId, btn) {
   }
 }
 
-// ---- Режим отображения ----
+// ---- Режим / страна / презентация ----
 function setMode(mode) {
   displayMode = mode;
   document.getElementById("topbar").classList.toggle("gold", mode === "anon");
@@ -179,20 +261,27 @@ function setMode(mode) {
   map.closePopup();
   renderProjects();
 }
-
-// ---- Регион ----
-function setRegion(key) {
-  activeRegion = key;
-  const r = REGIONS[key];
-  map.flyTo(r.center, r.zoom, { duration: 0.8 });
-  document.querySelectorAll('[data-region]').forEach(b => b.classList.toggle("active", b.dataset.region === key));
+function setCountry(name) {
+  activeCountry = name;
+  document.querySelectorAll('[data-country]').forEach(b => b.classList.toggle("active", b.dataset.country === name));
   applyFilters();
+  fitTo(name === "all" ? PROJECTS : PROJECTS.filter(p => p.country === name));
+}
+function fitTo(list) {
+  if (!list.length) return;
+  map.flyToBounds(L.latLngBounds(list.map(p => p.coords)), { padding: [70, 70], maxZoom: 14, duration: 0.8 });
+}
+function togglePresent() {
+  presenting = !presenting;
+  document.body.classList.toggle("presenting", presenting);
+  document.getElementById("present-btn").textContent = presenting ? "✕ Выйти" : "▣ Презентация";
+  map.closePopup();
+  updateLabels();
 }
 
-// ---- Сборка панели ----
+// ---- Сборка панели (после загрузки данных) ----
 function uniq(arr) { return [...new Set(arr)]; }
 function buildTopbar() {
-  // режим
   const modeRow = document.getElementById("mode-row");
   [["named", "С названиями"], ["anon", "Для банков"]].forEach(([m, label]) => {
     const b = document.createElement("button");
@@ -200,36 +289,31 @@ function buildTopbar() {
     if (m === displayMode) b.classList.add("active");
     modeRow.appendChild(b);
   });
-  // регион
-  const regionRow = document.getElementById("region-row");
-  Object.keys(REGIONS).forEach(k => {
+  const countryRow = document.getElementById("country-row");
+  const allBtn = document.createElement("button");
+  allBtn.textContent = "Все"; allBtn.dataset.country = "all"; allBtn.onclick = () => setCountry("all");
+  allBtn.classList.add("active"); countryRow.appendChild(allBtn);
+  uniq(PROJECTS.map(p => p.country)).forEach(c => {
     const b = document.createElement("button");
-    b.textContent = REGIONS[k].label; b.dataset.region = k; b.onclick = () => setRegion(k);
-    if (k === "all") b.classList.add("active");
-    regionRow.appendChild(b);
+    b.textContent = c; b.dataset.country = c; b.onclick = () => setCountry(c);
+    countryRow.appendChild(b);
   });
-  // тип
-  const typeBox = document.getElementById("type-checks");
-  uniq(PROJECTS.map(p => p.typeCat)).forEach(v => typeBox.appendChild(makeCheck("type", v)));
-  // стадия
-  const stageBox = document.getElementById("stage-checks");
-  uniq(PROJECTS.map(p => p.stageCat)).forEach(v => stageBox.appendChild(makeCheck("stage", v)));
-  // бюджет
-  const maxEur = Math.ceil(Math.max(...PROJECTS.map(p => p.eur)) / 100000) * 100000;
+  uniq(PROJECTS.map(p => p.typeCat)).forEach(v => document.getElementById("type-checks").appendChild(makeCheck("type", v)));
+  uniq(PROJECTS.map(p => p.stageCat)).forEach(v => document.getElementById("stage-checks").appendChild(makeCheck("stage", v)));
+  const maxEur = Math.ceil(Math.max(...PROJECTS.map(p => p.eur), 100000) / 100000) * 100000;
   const slider = document.getElementById("budget");
   slider.max = maxEur; slider.value = maxEur; slider.step = 50000;
   const label = document.getElementById("budget-val");
   const upd = () => label.textContent = "до ≈ €" + (+slider.value).toLocaleString("ru-RU");
   slider.oninput = () => { upd(); applyFilters(); };
   upd();
-  // POI
-  const poi = document.getElementById("poi-checks");
   Object.keys(POI_CATEGORIES).forEach(k => {
     const c = POI_CATEGORIES[k];
     const l = document.createElement("label");
     l.innerHTML = `<input type="checkbox" id="poi-${k}" checked> ${c.emoji} ${c.label}`;
-    poi.appendChild(l);
+    document.getElementById("poi-checks").appendChild(l);
   });
+  document.getElementById("present-btn").onclick = togglePresent;
 }
 function makeCheck(group, value) {
   const l = document.createElement("label");
@@ -238,6 +322,4 @@ function makeCheck(group, value) {
   return l;
 }
 
-buildTopbar();
-renderProjects();
-document.getElementById("present-btn").onclick = togglePresent;
+loadData();

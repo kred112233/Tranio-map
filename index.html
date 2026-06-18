@@ -9,6 +9,7 @@
 </head>
 <body>
   <div id="map"></div>
+  <div id="loading">Загрузка проектов…</div>
 
   <button id="present-btn">▣ Презентация</button>
   <div id="caption" contenteditable="true">Подборка проектов</div>
@@ -20,8 +21,8 @@
     <div class="section-title">Режим показа</div>
     <div class="btn-row" id="mode-row"></div>
 
-    <div class="section-title">Регион</div>
-    <div class="btn-row" id="region-row"></div>
+    <div class="section-title">Страна</div>
+    <div class="btn-row" id="country-row"></div>
 
     <div class="section-title">Тип недвижимости</div>
     <div class="checks" id="type-checks"></div>
@@ -37,11 +38,11 @@
     <div class="checks" id="poi-checks"></div>
 
     <div class="hint">Клик по проекту → «Показать, что рядом». Расстояния по прямой (~).
-      Режим «Для банков» скрывает названия и ссылки на сайт.</div>
+      Режим «Для банков» скрывает названия и ссылки. Проекты берутся из Google-таблицы.</div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="projects.js"></script>
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
