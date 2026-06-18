@@ -17,6 +17,23 @@ html, body { margin: 0; height: 100%; font-family: -apple-system, "Segoe UI", Ro
 .section-title { font-size: 12px; text-transform: uppercase; color: #999; letter-spacing: .7px; margin: 14px 0 8px; }
 #topbar.gold .section-title { color: #b39b5a; }
 
+/* поиск */
+#search {
+  width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px;
+  font-size: 14px; outline: none; color: inherit; background: #fff;
+}
+#search:focus { border-color: #2b8fd0; }
+#topbar.gold #search { background: #221f17; border-color: #3a3526; color: #e8dcb5; }
+#topbar.gold #search:focus { border-color: #d4af37; }
+#search-results { display: none; margin-top: 6px; max-height: 230px; overflow-y: auto; }
+.sr-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; }
+.sr-item:hover { background: #eef4fa; }
+.sr-item b { font-size: 14px; }
+.sr-item span { font-size: 12px; color: #888; }
+.sr-empty { padding: 8px 10px; color: #999; font-size: 13px; }
+#topbar.gold .sr-item:hover { background: #2c281c; }
+#topbar.gold .sr-item span { color: #9a8c63; }
+
 /* строки кнопок */
 .btn-row { display: flex; gap: 7px; }
 .btn-row button {

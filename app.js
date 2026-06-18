@@ -19,7 +19,9 @@ const POI_QUERY = {
 
 const SEARCH_RADIUS = 2000;
 let PROJECTS = [];
-let displayMode = "named";
+const isManager = location.hash.replace(/^#/, "") === MANAGER_SECRET;  // менеджер по секретной ссылке
+let theme = "blue";          // визуальная тема: "blue" | "gold"
+let showNames = isManager;   // названия и ссылки видит только менеджер
 let activeCountry = "all";
 let activeRegion = "all";
 let presenting = false;
@@ -159,10 +161,10 @@ function galStep(id, dir) {
 }
 
 function cardHTML(p) {
-  const title = displayMode === "anon" ? `${p.type} · ${p.area}` : p.name;
-  const areaLine = displayMode === "anon" ? "" : `<div class="area">📍 ${p.area}</div>`;
-  const link = (displayMode === "anon" || !p.url) ? "" :
-    `<a class="link" href="${p.url}" target="_blank" rel="noopener">Открыть проект на tranio.ru ↗</a>`;
+  const title = showNames ? p.name : `${p.type} · ${p.area}`;
+  const areaLine = showNames ? `<div class="area">📍 ${p.area}</div>` : "";
+  const link = (showNames && p.url) ?
+    `<a class="link" href="${p.url}" target="_blank" rel="noopener">Открыть проект на tranio.ru ↗</a>` : "";
   return `<div class="card">${galleryHTML(p)}<div class="body">
       <h3>${title}</h3>${areaLine}
       <div class="tags"><span>${p.type}</span><span>${p.stageLabel}</span><span>${p.size}</span></div>
@@ -176,8 +178,8 @@ function renderProjects() {
   Object.values(projMarkers).forEach(m => map.removeLayer(m));
   for (const k in projMarkers) delete projMarkers[k];
   PROJECTS.forEach(p => {
-    const cls = displayMode === "anon" ? "gold" : "blue";
-    const glyph = displayMode === "anon" ? "★" : "🏠";
+    const cls = theme === "gold" ? "gold" : "blue";
+    const glyph = theme === "gold" ? "★" : "🏠";
     const icon = L.divIcon({ className: "", iconSize: [36, 36], iconAnchor: [18, 36], popupAnchor: [0, -36],
       html: `<div class="proj-marker ${cls}"><span>${glyph}</span></div>` });
     projMarkers[p.id] = L.marker(p.coords, { icon }).addTo(map).bindPopup(cardHTML(p), { maxWidth: 310 });
@@ -207,7 +209,7 @@ function applyFilters() {
 // ---- Подписи на карте + легенда (только в презентации) ----
 function updateLabels() {
   const legend = document.getElementById("legend");
-  legend.className = displayMode === "anon" ? "gold" : "";
+  legend.className = theme === "gold" ? "gold" : "";
   let rows = "", n = 0;
   PROJECTS.forEach(p => {
     const m = projMarkers[p.id];
@@ -216,9 +218,9 @@ function updateLabels() {
       const thumb = p.img ? `style="background-image:url('${p.img}')"` : "";
       m.bindTooltip(`<div class="ml"><div class="ml-thumb" ${thumb}></div>` +
         `<div class="ml-text"><b>Проект ${n}</b><span>${p.price}</span></div></div>`,
-        { permanent: true, direction: "top", offset: [0, -34], className: "map-label" + (displayMode === "anon" ? " gold" : "") });
+        { permanent: true, direction: "top", offset: [0, -34], className: "map-label" + (theme === "gold" ? " gold" : "") });
       m.openTooltip();
-      const title = displayMode === "anon" ? `${p.type} · ${p.area}` : `${p.name} · ${p.area}`;
+      const title = showNames ? `${p.name} · ${p.area}` : `${p.type} · ${p.area}`;
       rows += `<div class="lg-row"><b>${n}</b><span>${title}</span><span class="lg-price">${p.price}</span></div>`;
     } else {
       m.unbindTooltip();
@@ -272,8 +274,9 @@ async function loadNearby(projectId, btn) {
 
 // ---- Режим / страна / презентация ----
 function setMode(mode) {
-  displayMode = mode;
-  document.getElementById("topbar").classList.toggle("gold", mode === "anon");
+  if (mode === "named") { theme = "blue"; showNames = true; }
+  else { theme = "gold"; showNames = false; }
+  document.getElementById("topbar").classList.toggle("gold", theme === "gold");
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
   map.closePopup();
   renderProjects();
@@ -313,6 +316,32 @@ function fitTo(list) {
   if (!list.length) return;
   map.flyToBounds(L.latLngBounds(list.map(p => p.coords)), { padding: [70, 70], maxZoom: 14, duration: 0.8 });
 }
+// ---- Поиск ----
+function renderSearchResults(q) {
+  const box = document.getElementById("search-results");
+  if (!q) { box.style.display = "none"; box.innerHTML = ""; return; }
+  const matches = PROJECTS.filter(p => {
+    // по названию ищем всегда (даже у клиента) — но показываем обезличенно
+    return [p.name, p.area, p.region, p.country].join(" ").toLowerCase().includes(q);
+  }).slice(0, 8);
+  box.style.display = "block";
+  if (!matches.length) { box.innerHTML = '<div class="sr-empty">Ничего не найдено</div>'; return; }
+  box.innerHTML = matches.map(p => {
+    const label = showNames ? p.name : `${p.type} · ${p.area}`;
+    const sub = [p.region, p.country].filter(Boolean).join(", ");
+    return `<div class="sr-item" onclick="gotoProject('${p.id}')"><b>${label}</b><span>${sub}</span></div>`;
+  }).join("");
+}
+function gotoProject(id) {
+  const p = PROJECTS.find(x => x.id === id);
+  const m = projMarkers[id];
+  if (!map.hasLayer(m)) m.addTo(map);          // показать, даже если скрыт фильтром
+  map.flyTo(p.coords, 15, { duration: 0.8 });
+  m.openPopup();
+  document.getElementById("search").value = "";
+  document.getElementById("search-results").style.display = "none";
+}
+
 function togglePresent() {
   presenting = !presenting;
   document.body.classList.toggle("presenting", presenting);
@@ -324,13 +353,17 @@ function togglePresent() {
 // ---- Сборка панели (после загрузки данных) ----
 function uniq(arr) { return [...new Set(arr)]; }
 function buildTopbar() {
-  const modeRow = document.getElementById("mode-row");
-  [["named", "С названиями"], ["anon", "Для банков"]].forEach(([m, label]) => {
-    const b = document.createElement("button");
-    b.textContent = label; b.dataset.mode = m; b.onclick = () => setMode(m);
-    if (m === displayMode) b.classList.add("active");
-    modeRow.appendChild(b);
-  });
+  if (isManager) {
+    const modeRow = document.getElementById("mode-row");
+    [["named", "С названиями"], ["anon", "Для банков"]].forEach(([m, label]) => {
+      const b = document.createElement("button");
+      b.textContent = label; b.dataset.mode = m; b.onclick = () => setMode(m);
+      if (m === "named") b.classList.add("active");
+      modeRow.appendChild(b);
+    });
+  } else {
+    document.getElementById("mode-section").style.display = "none";  // клиент не видит переключатель
+  }
   const countryRow = document.getElementById("country-row");
   const allBtn = document.createElement("button");
   allBtn.textContent = "Все"; allBtn.dataset.country = "all"; allBtn.onclick = () => setCountry("all");
@@ -356,6 +389,8 @@ function buildTopbar() {
     document.getElementById("poi-checks").appendChild(l);
   });
   document.getElementById("present-btn").onclick = togglePresent;
+  const search = document.getElementById("search");
+  search.oninput = () => renderSearchResults(search.value.trim().toLowerCase());
 }
 function makeCheck(group, value) {
   const l = document.createElement("label");
