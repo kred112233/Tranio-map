@@ -21,6 +21,7 @@ const SEARCH_RADIUS = 2000;
 let PROJECTS = [];
 let displayMode = "named";
 let activeCountry = "all";
+let activeRegion = "all";
 let presenting = false;
 
 // ---- Карта ----
@@ -83,7 +84,7 @@ function rowsToProjects(rows) {
     const photos = get(r, "Фото").split("|").map(s => s.trim()).filter(Boolean);
     const price = get(r, "Цена");
     out.push({
-      id: "p" + idx, country, coords,
+      id: "p" + idx, country, region: get(r, "Регион"), coords,
       name: get(r, "Название") || "Без названия",
       area: get(r, "Город/Локация"),
       type, typeCat: deriveType(type),
@@ -139,15 +140,30 @@ function distance(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
+function galleryHTML(p) {
+  if (!p.photos.length) return `<div class="noimg">Фото будет позже</div>`;
+  const multi = p.photos.length > 1;
+  return `<div class="gallery" id="gal-${p.id}">
+      <img src="${p.photos[0]}" data-idx="0" onerror="this.classList.add('broken')">
+      ${multi ? `<button class="gal-nav prev" onclick="galStep('${p.id}',-1)">‹</button>
+      <button class="gal-nav next" onclick="galStep('${p.id}',1)">›</button>
+      <div class="gal-count"><span id="gal-c-${p.id}">1</span>/${p.photos.length}</div>` : ""}
+    </div>`;
+}
+function galStep(id, dir) {
+  const p = PROJECTS.find(x => x.id === id);
+  const img = document.querySelector(`#gal-${id} img`);
+  const idx = (+img.dataset.idx + dir + p.photos.length) % p.photos.length;
+  img.src = p.photos[idx]; img.dataset.idx = idx; img.classList.remove("broken");
+  document.getElementById("gal-c-" + id).textContent = idx + 1;
+}
+
 function cardHTML(p) {
-  const img = p.img
-    ? `<img src="${p.img}" onerror="this.outerHTML='<div class=&quot;noimg&quot;>Фото не загрузилось</div>'">`
-    : `<div class="noimg">Фото будет позже</div>`;
   const title = displayMode === "anon" ? `${p.type} · ${p.area}` : p.name;
   const areaLine = displayMode === "anon" ? "" : `<div class="area">📍 ${p.area}</div>`;
   const link = (displayMode === "anon" || !p.url) ? "" :
     `<a class="link" href="${p.url}" target="_blank" rel="noopener">Открыть проект на tranio.ru ↗</a>`;
-  return `<div class="card">${img}<div class="body">
+  return `<div class="card">${galleryHTML(p)}<div class="body">
       <h3>${title}</h3>${areaLine}
       <div class="tags"><span>${p.type}</span><span>${p.stageLabel}</span><span>${p.size}</span></div>
       <div class="price">${p.price}</div>
@@ -179,6 +195,7 @@ function applyFilters() {
   const maxEur = +document.getElementById("budget").value;
   PROJECTS.forEach(p => {
     const ok = (activeCountry === "all" || p.country === activeCountry)
+      && (activeRegion === "all" || p.region === activeRegion)
       && types.includes(p.typeCat) && stages.includes(p.stageCat) && p.eur <= maxEur;
     const m = projMarkers[p.id];
     if (ok && !map.hasLayer(m)) m.addTo(map);
@@ -262,10 +279,35 @@ function setMode(mode) {
   renderProjects();
 }
 function setCountry(name) {
-  activeCountry = name;
+  activeCountry = name; activeRegion = "all";
   document.querySelectorAll('[data-country]').forEach(b => b.classList.toggle("active", b.dataset.country === name));
+  buildRegionRow(name);
   applyFilters();
   fitTo(name === "all" ? PROJECTS : PROJECTS.filter(p => p.country === name));
+}
+// Второй ряд кнопок — регионы выбранной страны (появляется, если их ≥2)
+function buildRegionRow(country) {
+  const section = document.getElementById("region-section");
+  const row = document.getElementById("region-row");
+  row.innerHTML = "";
+  const regions = country === "all" ? []
+    : uniq(PROJECTS.filter(p => p.country === country && p.region).map(p => p.region));
+  if (regions.length < 2) { section.style.display = "none"; return; }
+  section.style.display = "block";
+  const all = document.createElement("button");
+  all.textContent = "Все"; all.dataset.region = "all"; all.onclick = () => setRegion("all");
+  all.classList.add("active"); row.appendChild(all);
+  regions.forEach(rg => {
+    const b = document.createElement("button");
+    b.textContent = rg; b.dataset.region = rg; b.onclick = () => setRegion(rg);
+    row.appendChild(b);
+  });
+}
+function setRegion(name) {
+  activeRegion = name;
+  document.querySelectorAll('[data-region]').forEach(b => b.classList.toggle("active", b.dataset.region === name));
+  applyFilters();
+  fitTo(PROJECTS.filter(p => p.country === activeCountry && (name === "all" || p.region === name)));
 }
 function fitTo(list) {
   if (!list.length) return;
