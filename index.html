@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Карта проектов · Tranio</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <button id="present-btn">▣ Презентация</button>
+  <div id="caption" contenteditable="true">Подборка проектов</div>
+  <div id="legend"></div>
+
+  <div id="topbar">
+    <h1>Карта проектов <span>Tranio</span></h1>
+
+    <div class="section-title">Режим показа</div>
+    <div class="btn-row" id="mode-row"></div>
+
+    <div class="section-title">Регион</div>
+    <div class="btn-row" id="region-row"></div>
+
+    <div class="section-title">Тип недвижимости</div>
+    <div class="checks" id="type-checks"></div>
+
+    <div class="section-title">Стадия</div>
+    <div class="checks" id="stage-checks"></div>
+
+    <div class="section-title">Бюджет</div>
+    <div class="budget-val" id="budget-val"></div>
+    <input type="range" id="budget" min="0">
+
+    <div class="section-title">Что показать рядом</div>
+    <div class="checks" id="poi-checks"></div>
+
+    <div class="hint">Клик по проекту → «Показать, что рядом». Расстояния по прямой (~).
+      Режим «Для банков» скрывает названия и ссылки на сайт.</div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="projects.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
